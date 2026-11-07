@@ -1,0 +1,73 @@
+name: MiSensor
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  xcodeVersion: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    SDKROOT: macosx
+    CODE_SIGN_STYLE: Automatic
+    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "1.0.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    SUPPORTS_MACCATALYST: NO
+    SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+  configs:
+    Debug:
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+    Release:
+      SWIFT_COMPILATION_MODE: wholemodule
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+targets:
+  MiSensor:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/MiSensorApp
+      - path: Sources/MiSensorCore
+    settings:
+      base:
+        PRODUCT_NAME: MiSensor
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.MiSensor
+        INFOPLIST_FILE: Sources/MiSensorApp/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/MiSensorApp/MiSensorApp.entitlements
+        ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/../Frameworks"
+    dependencies:
+      - target: MiSensorWidget
+        embed: true
+        codeSign: true
+  MiSensorWidget:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Sources/MiSensorWidget
+      - path: Sources/MiSensorCore/SensorReading.swift
+    settings:
+      base:
+        PRODUCT_NAME: MiSensorWidget
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.MiSensor.MiSensorWidget
+        INFOPLIST_FILE: Sources/MiSensorWidget/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/MiSensorWidget/MiSensorWidget.entitlements
+        ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
+        SKIP_INSTALL: YES
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/../Frameworks"
+          - "@loader_path/Frameworks"
+schemes:
+  MiSensor:
+    build:
+      targets:
+        MiSensor: all
+        MiSensorWidget: all
+    run:
+      config: Debug
