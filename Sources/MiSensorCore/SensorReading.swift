@@ -64,6 +64,36 @@ public enum SensorFreshness: String, Codable, Sendable {
     case stale
 }
 
+/// 快照里的重复行清理。
+///
+/// 未绑定设备的广播帧常常不带 MAC，身份只能退回 `CBPeripheral.identifier`；
+/// 设备地址轮换后 CoreBluetooth 会给出新的 UUID，于是同一台温湿度计会同时
+/// 留下「UUID 行」和「MAC 行」。读数接近时删掉 UUID 行，只保留 MAC 行。
+public enum SensorSnapshotCleanup {
+    public static func dropProvisionalRows(
+        _ readings: [String: SensorReading]
+    ) -> [String: SensorReading] {
+        var result = readings
+        for (key, row) in readings where MiDeviceCatalog.isProvisionalIdentity(key) {
+            guard let temperature = row.temperature, let humidity = row.humidity else {
+                continue
+            }
+            let duplicated = readings.contains { other in
+                other.key != key
+                    && !MiDeviceCatalog.isProvisionalIdentity(other.key)
+                    && MiDeviceCatalog.looksLikeDuplicateRow(
+                        temperatureA: temperature,
+                        humidityA: humidity,
+                        temperatureB: other.value.temperature,
+                        humidityB: other.value.humidity
+                    )
+            }
+            if duplicated { result.removeValue(forKey: key) }
+        }
+        return result
+    }
+}
+
 public struct SensorSnapshotStore {
     public static let defaultFilename = "sensor-readings.json"
 

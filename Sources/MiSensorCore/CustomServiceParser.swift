@@ -9,7 +9,24 @@ public struct CustomSensorSample: Equatable, Sendable {
     public let temperature: Double
     public let humidity: Double
     public let batteryMillivolts: UInt16?
+    /// `0xEBE0CCC4` 读回的电量（0-100）。原厂固件的标准电量服务 `0x2A19`
+    /// 恒返 99%（实测两台设备都是），不能当真实电量用。
+    public let batteryPercent: Int?
     public let timestamp: UInt32?
+
+    public init(
+        temperature: Double,
+        humidity: Double,
+        batteryMillivolts: UInt16?,
+        batteryPercent: Int? = nil,
+        timestamp: UInt32? = nil
+    ) {
+        self.temperature = temperature
+        self.humidity = humidity
+        self.batteryMillivolts = batteryMillivolts
+        self.batteryPercent = batteryPercent
+        self.timestamp = timestamp
+    }
 }
 
 public struct CustomHistoryRecord: Equatable, Sendable {
@@ -35,9 +52,17 @@ public enum CustomServiceParser {
         return CustomSensorSample(
             temperature: Double(raw) / 100,
             humidity: humidity,
-            batteryMillivolts: millivolts,
-            timestamp: nil
+            batteryMillivolts: millivolts
         )
+    }
+
+    /// `0xEBE0CCC4` "Battery": one byte, 0-100 %.
+    /// Layout confirmed on the wire (MJWSD05MMC 2.0.0_0026 = 0x28 while CCC1
+    /// reported 2535 mV; LYWSD03MMC 1.0.0_0130 = 0x64 at 2866 mV).
+    public static func parseBattery(_ data: Data) -> Int? {
+        let bytes = [UInt8](data)
+        guard bytes.count >= 1, bytes[0] <= 100 else { return nil }
+        return Int(bytes[0])
     }
 
     /// `0xEBE0CCBB`: last measurement record.

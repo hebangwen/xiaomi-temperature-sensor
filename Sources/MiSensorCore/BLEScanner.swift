@@ -19,6 +19,13 @@ public struct SensorAdvertisement: Sendable {
     public let isDuplicate: Bool
 }
 
+/// `CBPeripheral` 不是 `Sendable`，但 CoreBluetooth 保证回调发生在同一个主线程。
+/// 用这个盒子把扫描到的外设对象带进主 actor 闭包，避免“捕获非 Sendable 值”的编译错误。
+private final class PeripheralBox: @unchecked Sendable {
+    let peripheral: CBPeripheral
+    init(_ peripheral: CBPeripheral) { self.peripheral = peripheral }
+}
+
 /// Every FE95 frame the OS handed us, decoded or not. Used by the diagnostics UI
 /// so a firmware the parser cannot read is still visible instead of silent.
 public struct RawSensorFrame: Sendable {
@@ -27,6 +34,28 @@ public struct RawSensorFrame: Sendable {
     public let rssi: Int
     public let payload: Data
     public let note: String?
+    /// 帧里的 Product ID。用来区分「真是温湿度计」和共用 `FE95` 的灯/开关。
+    public let productID: UInt16?
+    /// 这一帧是否带出了温湿度（或电量）之类的测量值。
+    public let hasMeasurement: Bool
+
+    public init(
+        deviceID: String,
+        peripheralName: String?,
+        rssi: Int,
+        payload: Data,
+        note: String?,
+        productID: UInt16? = nil,
+        hasMeasurement: Bool = false
+    ) {
+        self.deviceID = deviceID
+        self.peripheralName = peripheralName
+        self.rssi = rssi
+        self.payload = payload
+        self.note = note
+        self.productID = productID
+        self.hasMeasurement = hasMeasurement
+    }
 }
 
 /// Unstructured diagnostic sink. Kept outside the MainActor type so the
@@ -58,15 +87,23 @@ enum GATTProbeError: Error, LocalizedError {
 /// Passive-only CoreBluetooth scanner. It never connects to the sensor and never
 /// starts a GATT session, so the original firmware remains untouched.
 @MainActor
-public final class BLEScanner: NSObject, @preconcurrency CBCentralManagerDelegate {    private let service = CBUUID(string: "FE95")
-    private lazy var central = CBCentralManager(
-        delegate: self,
-        queue: nil,
-        options: [
-            CBCentralManagerOptionRestoreIdentifierKey: "com.example.MiSensor.central",
-            CBCentralManagerOptionShowPowerAlertKey: true
-        ]
-    )
+public final class BLEScanner: NSObject, @preconcurrency CBCentralManagerDelegate {
+    private let service = CBUUID(string: "FE95")
+    /// 状态恢复标识只在有 App bundle 的进程里有效。命令行工具传 nil，
+    /// 否则 `CBCentralManager` 会卡在初始化而不回调状态。
+    private let restoreIdentifier: String?
+    private lazy var central: CBCentralManager = {
+        var options: [String: Any] = [CBCentralManagerOptionShowPowerAlertKey: true]
+        if let restoreIdentifier {
+            options[CBCentralManagerOptionRestoreIdentifierKey] = restoreIdentifier
+        }
+        return CBCentralManager(delegate: self, queue: nil, options: options)
+    }()
+
+    public init(restoreIdentifier: String? = "com.example.MiSensor.central") {
+        self.restoreIdentifier = restoreIdentifier
+        super.init()
+    }
 
     public var onStatusChange: ((BLEScannerStatus) -> Void)?
     public var onAdvertisement: ((SensorAdvertisement) -> Void)?
@@ -77,8 +114,20 @@ public final class BLEScanner: NSObject, @preconcurrency CBCentralManagerDelegat
     private var bindkeys: [String: Data] = [:]
     private var knownMACs: [UUID: Data] = [:]
     private var discoveredPeripherals: [String: UUID] = [:]
-    private var probeSession: GATTProbeSession?
-    private var sampleSession: CustomSampleSession?
+    // 直接复用 didDiscover 拿到的 CBPeripheral。对广播稀疏的设备（如 MJWSD05MMC），
+    // 用 retrievePeripherals 重新取出的对象 connect 会一直挂到超时，实测必现。
+    private var discoveredObjects: [UUID: CBPeripheral] = [:]
+    // One session per peripheral. A single shared session let the GATT callbacks
+    // of sensor A be delivered to sensor B's session when both polled at once,
+    // which wrote A's sample into B's reading.
+    private var probeSessions: [UUID: GATTProbeSession] = [:]
+    private var sampleSessions: [UUID: CustomSampleSession] = [:]
+    // 校时会写设备，和读取会话一样按外设隔离，不允许共享 delegate。
+    private var timeSyncSessions: [UUID: TimeSyncSession] = [:]
+    // CoreBluetooth allows one connection attempt at a time here: the second
+    // connect() cancels the scan the first one relies on, and stopScan() from
+    // either task aborts the other's service discovery.
+    private let gattGate = AsyncGate()
     private var lastFrames: [String: Data] = [:]
     private var lastProblems: [String: MiBeaconError] = [:]
     private var fallbackTask: Task<Void, Never>?
@@ -92,30 +141,43 @@ public final class BLEScanner: NSObject, @preconcurrency CBCentralManagerDelegat
         scanIfPossible()
     }
 
-    /// Connects to a discovered sensor and dumps its GATT tree. Used to check
-    /// whether readings are available over a connection when advertisements
-    /// carry no Object payload.
-    public func probeGATT(for deviceID: String, timeout: TimeInterval = 20) async throws -> String {
-        guard central.state == .poweredOn else { throw GATTProbeError.notScanning }
+    /// 优先用扫描时拿到的外设对象；只有缓存缺失时才回退到 retrievePeripherals。
+    private func resolvePeripheral(for deviceID: String) throws -> CBPeripheral {
         guard let uuid = discoveredPeripherals[deviceID] else {
             throw GATTProbeError.peripheralUnavailable
+        }
+        if let cached = discoveredObjects[uuid] {
+            return cached
         }
         guard let peripheral = central.retrievePeripherals(withIdentifiers: [uuid]).first else {
             throw GATTProbeError.peripheralUnavailable
         }
+        return peripheral
+    }
+
+    /// Connects to a discovered sensor and dumps its GATT tree. Used to check
+    /// whether readings are available over a connection when advertisements
+    /// carry no Object payload.
+    public func probeGATT(for deviceID: String, timeout: TimeInterval = 20) async throws -> String {
+        await gattGate.acquire()
+        defer { gattGate.release() }
+
+        guard central.state == .poweredOn else { throw GATTProbeError.notScanning }
+        let peripheral = try resolvePeripheral(for: deviceID)
+        let uuid = peripheral.identifier
 
         central.stopScan()
 
         let session = GATTProbeSession(peripheral: peripheral, timeout: timeout)
-        probeSession = session
+        probeSessions[uuid] = session
         central.connect(peripheral, options: nil)
         do {
             let report = try await session.run()
-            probeSession = nil
+            probeSessions.removeValue(forKey: uuid)
             scanIfPossible()
             return report
         } catch {
-            probeSession = nil
+            probeSessions.removeValue(forKey: uuid)
             scanIfPossible()
             throw error
         }
@@ -124,26 +186,95 @@ public final class BLEScanner: NSObject, @preconcurrency CBCentralManagerDelegat
     /// Connects, reads one live sample from the custom sensor service and
     /// disconnects. Used when the advertisement carries no usable payload.
     public func readCustomSample(for deviceID: String, timeout: TimeInterval = 12) async throws -> CustomSensorSample {
+        // Sensors are polled by independent tasks. Serialize them so only one
+        // connect / stopScan / service discovery is in flight at a time.
+        await gattGate.acquire()
+        defer { gattGate.release() }
+
         guard central.state == .poweredOn else { throw GATTProbeError.notScanning }
-        guard let uuid = discoveredPeripherals[deviceID],
-              let peripheral = central.retrievePeripherals(withIdentifiers: [uuid]).first else {
-            throw GATTProbeError.peripheralUnavailable
-        }
+        let peripheral = try resolvePeripheral(for: deviceID)
+        let peripheralID = peripheral.identifier
 
         central.stopScan()
         let session = CustomSampleSession(peripheral: peripheral, timeout: timeout)
-        sampleSession = session
+        sampleSessions[peripheralID] = session
         central.connect(peripheral, options: nil)
 
         do {
             let sample = try await session.run()
             central.cancelPeripheralConnection(peripheral)
-            sampleSession = nil
+            sampleSessions.removeValue(forKey: peripheralID)
             scanIfPossible()
             return sample
         } catch {
             central.cancelPeripheralConnection(peripheral)
-            sampleSession = nil
+            sampleSessions.removeValue(forKey: peripheralID)
+            scanIfPossible()
+            throw error
+        }
+    }
+
+    /// 把当前时间写进设备，也就是充当一次蓝牙网关。
+    /// 这一步**会改设备状态**（设备时钟），是本项目唯一写设备的通道。
+    public func pushClock(
+        to deviceID: String,
+        at date: Date = Date(),
+        timeout: TimeInterval = 12
+    ) async throws -> ClockSyncResult {
+        try await runClockSession(
+            deviceID: deviceID,
+            date: date,
+            timeout: timeout,
+            writeEnabled: true
+        )
+    }
+
+    /// 只读设备时钟，不写入。用于确认设备是否已经校时。
+    public func readClock(
+        from deviceID: String,
+        timeout: TimeInterval = 12
+    ) async throws -> ClockSyncResult {
+        try await runClockSession(
+            deviceID: deviceID,
+            date: Date(),
+            timeout: timeout,
+            writeEnabled: false
+        )
+    }
+
+    private func runClockSession(
+        deviceID: String,
+        date: Date,
+        timeout: TimeInterval,
+        writeEnabled: Bool
+    ) async throws -> ClockSyncResult {
+        await gattGate.acquire()
+        defer { gattGate.release() }
+
+        guard central.state == .poweredOn else { throw GATTProbeError.notScanning }
+        let peripheral = try resolvePeripheral(for: deviceID)
+        let peripheralID = peripheral.identifier
+
+        central.stopScan()
+        let session = TimeSyncSession(
+            peripheral: peripheral,
+            deviceID: deviceID,
+            date: date,
+            timeout: timeout,
+            writeEnabled: writeEnabled
+        )
+        timeSyncSessions[peripheralID] = session
+        central.connect(peripheral, options: nil)
+
+        do {
+            let result = try await session.run()
+            central.cancelPeripheralConnection(peripheral)
+            timeSyncSessions.removeValue(forKey: peripheralID)
+            scanIfPossible()
+            return result
+        } catch {
+            central.cancelPeripheralConnection(peripheral)
+            timeSyncSessions.removeValue(forKey: peripheralID)
             scanIfPossible()
             throw error
         }
@@ -153,12 +284,22 @@ public final class BLEScanner: NSObject, @preconcurrency CBCentralManagerDelegat
         _ central: CBCentralManager,
         didConnect peripheral: CBPeripheral
     ) {
-        let id = peripheral.identifier.uuidString
-        BLEScannerDiagnostics.log("GATT connected -> \(id)")
-        probeSession?.markConnected()
-        if let sampleSession {
-            peripheral.delegate = sampleSession
-            peripheral.discoverServices([CustomSampleSession.serviceUUID])
+        let id = peripheral.identifier
+        BLEScannerDiagnostics.log("GATT connected -> \(id.uuidString)")
+        if let session = timeSyncSessions[id] {
+            // 连接完成后再发现服务：连接前 connect 尚未生效，discoverServices 会失败。
+            peripheral.delegate = session
+            session.markConnected()
+        } else if let session = sampleSessions[id] {
+            // Bind this peripheral to the session created for *it*. A shared
+            // session let one device's callbacks feed the other device's read.
+            peripheral.delegate = session
+            peripheral.discoverServices([
+                CustomSampleSession.serviceUUID,
+                CustomSampleSession.mirrorServiceUUID
+            ])
+        } else if let session = probeSessions[id] {
+            session.markConnected()
         }
     }
 
@@ -167,8 +308,17 @@ public final class BLEScanner: NSObject, @preconcurrency CBCentralManagerDelegat
         didFailToConnect peripheral: CBPeripheral,
         error: Error?
     ) {
-        probeSession?.markDisconnected(error?.localizedDescription ?? "连接失败")
-        probeSession = nil
+        let id = peripheral.identifier
+        let reason = error?.localizedDescription ?? "连接失败"
+        if let session = sampleSessions.removeValue(forKey: id) {
+            session.markDisconnected(reason)
+        }
+        if let session = probeSessions.removeValue(forKey: id) {
+            session.markDisconnected(reason)
+        }
+        if let session = timeSyncSessions.removeValue(forKey: id) {
+            session.markDisconnected(reason)
+        }
     }
 
     public func centralManager(
@@ -178,15 +328,37 @@ public final class BLEScanner: NSObject, @preconcurrency CBCentralManagerDelegat
         isReconnecting: Bool,
         error: Error?
     ) {
-        probeSession?.markDisconnected(error?.localizedDescription ?? "设备断开")
-        probeSession = nil
-        sampleSession?.markDisconnected(error?.localizedDescription ?? "设备断开")
-        sampleSession = nil
+        let id = peripheral.identifier
+        let reason = error?.localizedDescription ?? "设备断开"
+        if let session = sampleSessions.removeValue(forKey: id) {
+            session.markDisconnected(reason)
+        }
+        if let session = probeSessions.removeValue(forKey: id) {
+            session.markDisconnected(reason)
+        }
+        if let session = timeSyncSessions.removeValue(forKey: id) {
+            session.markDisconnected(reason)
+        }
     }
 
     public func setBindkey(_ key: Data?, for deviceID: String) {
         bindkeys[deviceID.uppercased()] = key
         lastProblems.removeValue(forKey: deviceID.uppercased())
+    }
+
+    /// `CBPeripheral.identifier` is only a placeholder identity used until a
+    /// frame carrying a MAC arrives. Once that MAC is cached, every UUID-based
+    /// lookups collapses onto the MAC-based ID so a single sensor never keeps
+    /// two rows (and two poll loops) side by side.
+    public func canonicalDeviceID(for deviceID: String) -> String {
+        guard let uuid = UUID(uuidString: deviceID),
+              let mac = knownMACs[uuid],
+              mac.count == 6 else {
+            return deviceID
+        }
+        return mac.reversed()
+            .map { String(format: "%02X", $0) }
+            .joined(separator: ":")
     }
 
     public func removeAllBindkeys() {
@@ -261,6 +433,7 @@ public final class BLEScanner: NSObject, @preconcurrency CBCentralManagerDelegat
         // Copy value types before entering the actor-isolated closure. With a nil
         // dispatch queue CoreBluetooth already calls us on the main thread.
         let peripheralID = peripheral.identifier
+        let peripheralBox = PeripheralBox(peripheral)
         let peripheralName = peripheral.name
         let localName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         let rssi = RSSI.intValue
@@ -301,6 +474,7 @@ public final class BLEScanner: NSObject, @preconcurrency CBCentralManagerDelegat
 
         MainActor.assumeIsolated {
             discoveredPeripherals[peripheralID.uuidString] = peripheralID
+            discoveredObjects[peripheralID] = peripheralBox.peripheral
             if let packet {
                 // Also map the MAC-based device ID so probeGATT can resolve a
                 // sensor by the identifier the UI shows.
@@ -356,7 +530,11 @@ public final class BLEScanner: NSObject, @preconcurrency CBCentralManagerDelegat
                 peripheralName: name,
                 rssi: rssi,
                 payload: packet,
-                note: beacon.hasObject ? nil : "帧内没有 Object 字段"
+                note: beacon.hasObject ? nil : "帧内没有 Object 字段",
+                productID: beacon.productID,
+                hasMeasurement: beacon.temperature != nil
+                    || beacon.humidity != nil
+                    || beacon.battery != nil
             ))
             guard beacon.hasObject else {
                 let key = deviceID.uppercased()
@@ -407,5 +585,35 @@ public final class BLEScanner: NSObject, @preconcurrency CBCentralManagerDelegat
             ))
             onProblem?(fallbackID, .malformedObject)
         }
+    }
+}
+
+/// Minimal FIFO gate. CoreBluetooth connects one peripheral at a time here:
+/// a second `connect()` stops the scan the first session depends on, and each
+/// session's `stopScan()` would abort the other's service discovery. Polling
+/// tasks therefore take the gate around the whole connect/read/disconnect
+/// sequence instead of racing each other.
+@MainActor
+final class AsyncGate {
+    private var isBusy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if !isBusy {
+            isBusy = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        guard !waiters.isEmpty else {
+            isBusy = false
+            return
+        }
+        let next = waiters.removeFirst()
+        next.resume()
     }
 }

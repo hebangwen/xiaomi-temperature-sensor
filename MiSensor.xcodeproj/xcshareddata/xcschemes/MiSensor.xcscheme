@@ -21,20 +21,6 @@
                ReferencedContainer = "container:MiSensor.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
-         <BuildActionEntry
-            buildForTesting = "YES"
-            buildForRunning = "YES"
-            buildForProfiling = "YES"
-            buildForArchiving = "YES"
-            buildForAnalyzing = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "EEC5586B633E6A086830A700"
-               BuildableName = "MiSensorWidget.appex"
-               BlueprintName = "MiSensorWidget"
-               ReferencedContainer = "container:MiSensor.xcodeproj">
-            </BuildableReference>
-         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction

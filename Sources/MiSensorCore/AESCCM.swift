@@ -6,7 +6,7 @@ public enum AESCCMError: Error {
 }
 
 /// Minimal AES-128 CCM implementation for MiBeacon's 12-byte nonce and 4-byte MIC.
-/// Keeping it here avoids requiring a crypto package inside the Widget process.
+/// Keeping it here avoids adding a crypto package to the app target.
 public enum AESCCM {
     public static func decrypt(
         ciphertext: Data,

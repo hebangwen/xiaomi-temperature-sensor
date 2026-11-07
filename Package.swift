@@ -5,12 +5,18 @@ let package = Package(
     name: "MiSensor",
     platforms: [.macOS(.v14)],
     products: [
-        .library(name: "MiSensorCore", targets: ["MiSensorCore"])
+        .library(name: "MiSensorCore", targets: ["MiSensorCore"]),
+        .executable(name: "MiSensorCLI", targets: ["MiSensorCLI"])
     ],
     targets: [
         .target(
             name: "MiSensorCore",
             path: "Sources/MiSensorCore"
+        ),
+        .executableTarget(
+            name: "MiSensorCLI",
+            dependencies: ["MiSensorCore"],
+            path: "Sources/MiSensorCLI"
         ),
         .executableTarget(
             name: "MiSensorCoreTests",

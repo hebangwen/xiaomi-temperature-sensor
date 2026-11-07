@@ -46,8 +46,13 @@ struct MiSensorCoreTests {
         try run("formatted bindkey", testBindkeyAcceptsFormattedHex)
         try run("RFC 3610 AES-CCM vector", testRFC3610VectorOne)
         try run("custom service live value", testCustomLiveValue)
+        try run("custom service battery gate", testCustomBatteryCharacteristic)
         try run("custom service history record", testCustomHistoryRecord)
         try run("snapshot store", testStoreRoundTrip)
+        try run("device clock encoding", testClockEncoding)
+        try run("clock sync result", testClockSyncResultClassification)
+        try run("device catalog", testDeviceCatalog)
+        try run("snapshot duplicate rows", testSnapshotDuplicateRows)
         print("PASS: \(passed) protocol and storage tests")
     }
 
@@ -299,6 +304,25 @@ struct MiSensorCoreTests {
         try expectEqual(second.temperature, 18.09, "second temperature")
     }
 
+    private static func testCustomBatteryCharacteristic() throws {
+        // Real captures from EBE0CCC4 (2026-11-07 probe):
+        // MJWSD05MMC 2.0.0_0026 = 28 while CCC1 reported 2535 mV;
+        // LYWSD03MMC 1.0.0_0130 = 64 at 2866 mV.
+        try expectEqual(
+            CustomServiceParser.parseBattery(Data([0x28])),
+            40,
+            "MJWSD05MMC battery percent"
+        )
+        try expectEqual(
+            CustomServiceParser.parseBattery(Data([0x64])),
+            100,
+            "LYWSD03MMC battery percent"
+        )
+        // 0x2A19 恒返 99% 是假值，电量只信任 CCC4；越界值必须拒绝。
+        try expect(CustomServiceParser.parseBattery(Data([0x65])) == nil, "battery above 100 rejected")
+        try expect(CustomServiceParser.parseBattery(Data()) == nil, "empty battery value rejected")
+    }
+
     private static func testCustomHistoryRecord() throws {
         // Real capture: EBE0CCBC = c1 63 00 00 20 d8 7a 05 02 01 3c f4 00 39
         let record = try XCTUnwrapCustom(
@@ -327,6 +351,220 @@ struct MiSensorCoreTests {
         try expectEqual(measure.humidityA, 59, "measure humidity A")
         try expectEqual(measure.temperatureB, 18.0, "measure temperature B")
         try expectEqual(measure.humidityB, 58, "measure humidity B")
+    }
+
+    private static func testDeviceCatalog() throws {
+        // 实测两台温湿度计：LYWSD03MMC = 0x055B，MJWSD05MMC = 0x2832
+        try expect(MiDeviceCatalog.isKnownThermometer(productID: 0x055B), "LYWSD03MMC PID")
+        try expect(MiDeviceCatalog.isKnownThermometer(productID: 0x2832), "MJWSD05MMC PID")
+        try expect(!MiDeviceCatalog.isKnownThermometer(productID: 0x0A0D), "未知 PID 不算温湿度计")
+        // 身份判定：corebluetooth UUID 才是兜底身份
+        try expect(
+            MiDeviceCatalog.isProvisionalIdentity("8827F485-0344-7552-437B-7E4197C68982"),
+            "UUID 身份是兜底身份"
+        )
+        try expect(
+            !MiDeviceCatalog.isProvisionalIdentity("A4:C1:38:DB:98:A6"),
+            "MAC 身份不是兜底身份"
+        )
+        // 重复行判定：19.5℃/75% 的 UUID 行与 MAC 行视为同一台
+        try expect(
+            MiDeviceCatalog.looksLikeDuplicateRow(
+                temperatureA: 19.5, humidityA: 75,
+                temperatureB: 19.5, humidityB: 75
+            ),
+            "同一台设备的两行"
+        )
+        try expect(
+            !MiDeviceCatalog.looksLikeDuplicateRow(
+                temperatureA: 19.5, humidityA: 75,
+                temperatureB: 18.5, humidityB: 59
+            ),
+            "不同设备不应合并"
+        )
+        try expect(
+            !MiDeviceCatalog.looksLikeDuplicateRow(
+                temperatureA: nil, humidityA: 75,
+                temperatureB: 19.5, humidityB: 75
+            ),
+            "缺测量值不合并"
+        )
+    }
+
+    private static func testSnapshotDuplicateRows() throws {
+        let date = Date(timeIntervalSince1970: 1_794_000_000)
+        // 实测的两行：UUID 身份行与 MJWSD05MMC 的 MAC 行读数几乎相同
+        let macRow = SensorReading(
+            deviceID: "A4:C1:38:DB:98:A6",
+            displayName: "MJWSD05MMC",
+            temperature: 19.5,
+            humidity: 74,
+            updatedAt: date
+        )
+        let uuidRow = SensorReading(
+            deviceID: "8827F485-0344-7552-437B-7E4197C68982",
+            displayName: "温湿度计（身份未识别）",
+            temperature: 19.5,
+            humidity: 75,
+            updatedAt: date
+        )
+        let otherRow = SensorReading(
+            deviceID: "A4:C1:38:4B:6D:AB",
+            displayName: "LYWSD03MMC",
+            temperature: 18.5,
+            humidity: 59,
+            updatedAt: date
+        )
+        let cleaned = SensorSnapshotCleanup.dropProvisionalRows([
+            macRow.deviceID: macRow,
+            uuidRow.deviceID: uuidRow,
+            otherRow.deviceID: otherRow
+        ])
+        try expectEqual(cleaned.count, 2, "UUID 重复行应被删除")
+        try expect(cleaned[uuidRow.deviceID] == nil, "UUID 行不应保留")
+        try expect(cleaned[macRow.deviceID] != nil, "MAC 行保留")
+        try expect(cleaned[otherRow.deviceID] != nil, "另一台设备保留")
+    }
+
+    private static func testClockEncoding() throws {
+        // 真实抓包：未校时的 LYWSD03MMC（固件 1.0.0_0130）读 EBE0CCB7 = 2E 89 2D 06
+        try expectEqual(
+            ClockProtocol.decodeCustomClock(Data([0x2E, 0x89, 0x2D, 0x06])),
+            103_647_534,
+            "device clock readback"
+        )
+        // 设备字段就是 Unix 秒：写入值不做时区扣减（实测屏幕直接显示字段值）
+        try expectEqual(
+            ClockProtocol.deviceClockValue(unix: 1_794_046_306, utcOffsetSeconds: 28_800),
+            1_794_046_306,
+            "device clock value keeps Unix seconds"
+        )
+        try expectEqual(
+            ClockProtocol.displayUnix(deviceValue: 1_794_046_306, utcOffsetSeconds: 28_800),
+            1_794_046_306,
+            "display keeps raw seconds"
+        )
+        // 实测写入 LYWSD03MMC 的 4 字节载荷（真实 Unix 1 794 046 306 = 62 F9 EE 6A）
+        try expectEqual(
+            ClockProtocol.encodeCustomClock(deviceValue: 1_794_046_306),
+            Data([0x62, 0xF9, 0xEE, 0x6A]),
+            "4-byte clock write payload"
+        )
+        // 真实抓包：3 秒后回读 B5 D0 EE 6A，说明固件接受并开始按新时钟走
+        try expectEqual(
+            ClockProtocol.decodeCustomClock(Data([0xB5, 0xD0, 0xEE, 0x6A])),
+            1_794_035_893,
+            "clock readback after write"
+        )
+        // 6 字节固件（MJWSD05MMC）必须等长写入，否则 ACK 但整帧被丢弃
+        // 实测写入载荷 9D 0E EF 6A 08 00 = 1 794 051 741（真实 Unix）
+        try expectEqual(
+            ClockProtocol.encodeCustomClock(deviceValue: 1_794_051_741, fieldLength: 6),
+            Data([0x9D, 0x0E, 0xEF, 0x6A, 0x08, 0x00]),
+            "6-byte clock write payload"
+        )
+        // 标准 MiBeacon 校时走固件自己的时区换算，载荷必须保持原始 Unix 秒
+        try expectEqual(
+            ClockProtocol.encodeMiTime(unix: 1_794_035_890),
+            Data([0xB2, 0xD0, 0xEE, 0x6A, 0x08]),
+            "MiBeacon time payload stays Unix"
+        )
+        try expectEqual(
+            ClockProtocol.hourOffset(for: Date(timeIntervalSince1970: 1_794_035_890)),
+            8,
+            "hour timezone offset"
+        )
+        // 标准 MiBeacon 校时载荷：4 字节秒 + UTC+8
+        try expectEqual(
+            ClockProtocol.encodeMiTime(unix: 1_794_035_890),
+            Data([0xB2, 0xD0, 0xEE, 0x6A, 0x08]),
+            "MiBeacon time payload"
+        )
+        // 真实抓包：EBE0CCBB = 75 70 00 00 60 7B 2D 06 …，偏移 4 是记录时间戳
+        let record = Data([
+            0x75, 0x70, 0x00, 0x00, 0x60, 0x7B, 0x2D, 0x06,
+            0xB8, 0x00, 0x3A, 0xB2, 0x00, 0x39
+        ])
+        try expectEqual(
+            ClockProtocol.recordTimestamp(fromRecord: record),
+            103_644_000,
+            "record timestamp"
+        )
+        // 未校时的设备时间是 1973 年，明显不可信
+        try expect(!ClockProtocol.looksSynchronized(103_647_534), "unset device clock")
+        try expect(ClockProtocol.looksSynchronized(1_794_035_890), "synchronized device clock")
+        try expectEqual(
+            ClockProtocol.unixSeconds(from: Date(timeIntervalSince1970: 1_794_035_890.75)),
+            1_794_035_890,
+            "date to 32-bit seconds"
+        )
+        try expectEqual(ClockProtocol.decodeCustomClock(Data([0x01])), nil, "short clock payload")
+        // 6 字节读回：多出的时区字节不影响秒数解析（真实抓包 0D 08 D0 61 08 00）
+        try expectEqual(
+            ClockProtocol.decodeCustomClock(Data([0x0D, 0x08, 0xD0, 0x61, 0x08, 0x00])),
+            1_641_023_501,
+            "6-byte clock readback"
+        )
+    }
+
+    private static func testClockSyncResultClassification() throws {
+        let date = Date(timeIntervalSince1970: 1_794_035_890)
+        let synced = ClockSyncResult(
+            deviceID: "01:02:03:04:05:06",
+            channel: .customClock,
+            pushedUnix: 1_794_035_890,
+            pushedAt: date,
+            clockBefore: 103_647_534,
+            clockAfter: 1_794_035_893,
+            recordUnix: 103_644_000,
+            utcOffsetSeconds: 28_800
+        )
+        try expectEqual(synced.driftSeconds, 3, "drift after write")
+        try expect(synced.verified, "3 秒偏差应判定为接受")
+        try expect(!synced.wasAlreadySynchronized, "推送前设备未校时")
+        try expect(
+            synced.summary.contains("历史缓冲仍保留未校时前的时间戳"),
+            "回读一致时应提示历史缓冲未被改写"
+        )
+        try expectEqual(
+            synced.displayedUnix,
+            1_794_035_893,
+            "屏显时间 = 设备数值（不做时区换算）"
+        )
+        try expect(
+            synced.summary.contains("写入数值 1794035890"),
+            "摘要必须报出写入设备的数值"
+        )
+
+        // 固件忽略写入时回读仍是旧时钟，必须判为未接受
+        let rejected = ClockSyncResult(
+            deviceID: "01:02:03:04:05:06",
+            channel: .customClock,
+            pushedUnix: 1_794_035_890,
+            pushedAt: date,
+            clockBefore: 103_647_534,
+            clockAfter: 103_647_540,
+            recordUnix: nil,
+            utcOffsetSeconds: 28_800
+        )
+        try expect(!rejected.verified, "回读仍停留在旧时钟时必须判为未接受")
+        try expect(rejected.summary.contains("固件未接受"), "拒绝写入的文案")
+
+        // 只读模式
+        let readOnly = ClockSyncResult(
+            deviceID: "01:02:03:04:05:06",
+            channel: .customClock,
+            pushedUnix: 0,
+            pushedAt: date,
+            clockBefore: 1_794_035_893,
+            clockAfter: 1_794_035_893,
+            recordUnix: nil,
+            writePerformed: false,
+            utcOffsetSeconds: 28_800
+        )
+        try expectEqual(readOnly.driftSeconds, nil, "只读模式没有偏差")
+        try expect(!readOnly.verified, "只读模式不算写入成功")
+        try expect(readOnly.summary.contains("未写入"), "只读模式文案")
     }
 
     private static func testStoreRoundTrip() throws {

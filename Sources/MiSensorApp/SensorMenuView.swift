@@ -64,13 +64,6 @@ struct SensorMenuView: View {
 
                 Spacer()
                 Button {
-                    controller.reloadWidgets()
-                } label: {
-                    Label("刷新小组件", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.plain)
-
-                Button {
                     NSApplication.shared.terminate(nil)
                 } label: {
                     Image(systemName: "power")

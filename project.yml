@@ -41,33 +41,10 @@ targets:
         LD_RUNPATH_SEARCH_PATHS:
           - "$(inherited)"
           - "@executable_path/../Frameworks"
-    dependencies:
-      - target: MiSensorWidget
-        embed: true
-        codeSign: true
-  MiSensorWidget:
-    type: app-extension
-    platform: macOS
-    sources:
-      - path: Sources/MiSensorWidget
-      - path: Sources/MiSensorCore/SensorReading.swift
-    settings:
-      base:
-        PRODUCT_NAME: MiSensorWidget
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.MiSensor.MiSensorWidget
-        INFOPLIST_FILE: Sources/MiSensorWidget/Info.plist
-        CODE_SIGN_ENTITLEMENTS: Sources/MiSensorWidget/MiSensorWidget.entitlements
-        ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
-        SKIP_INSTALL: YES
-        LD_RUNPATH_SEARCH_PATHS:
-          - "$(inherited)"
-          - "@executable_path/../Frameworks"
-          - "@loader_path/Frameworks"
 schemes:
   MiSensor:
     build:
       targets:
         MiSensor: all
-        MiSensorWidget: all
     run:
       config: Debug
