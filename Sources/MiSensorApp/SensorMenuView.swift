@@ -17,6 +17,14 @@ struct SensorMenuView: View {
                     .font(.callout)
                     .lineLimit(2)
                 Spacer()
+                Button {
+                    controller.refreshAll()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(sensorAccent)
+                .help("立即对每台设备发起一轮实时读取")
             }
             .padding(16)
 

@@ -9,24 +9,60 @@
 /* Begin PBXBuildFile section */
 		14FF8FFE86BEC5076C1CB76E /* TimeSyncSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2838EB4EDCCB74AC2FAC10D /* TimeSyncSession.swift */; };
 		165D63C69F4E9A79A3F53592 /* ClockSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB7117E3CAE68C7BA646B5F1 /* ClockSync.swift */; };
+		20EE50D9F87F9903B51ACDA5 /* SnapshotServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10E771B935653878E5A9A489 /* SnapshotServer.swift */; };
 		4E7CDCF9B48E02C1356E9B9A /* MiDeviceCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A10D89E6D8E7B17B6BD37CC /* MiDeviceCatalog.swift */; };
 		520CC1827048F2D83154DB88 /* BindkeyKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE5612BF3D0D7597B3C02AF7 /* BindkeyKeychain.swift */; };
 		52B05099F2265EAFE59D3FE3 /* SensorController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65FF7E98A4D31CCA1A95873E /* SensorController.swift */; };
+		554563D8DA124DE4940FD3E4 /* SensorReading.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79936E0A9F846DE0213F9666 /* SensorReading.swift */; };
+		7EDF8647F12C3D91564DA7A0 /* RefreshSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = C09CAC9C5254D942C7CBED92 /* RefreshSignal.swift */; };
 		7F38AFE482A05B90F5A7462A /* AESCCM.swift in Sources */ = {isa = PBXBuildFile; fileRef = 490A088B1F536C3776F34FDB /* AESCCM.swift */; };
 		87D2C0D906E0C37D5207B2AF /* GATTProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C50C725C8B90BAC30DE1012 /* GATTProbe.swift */; };
+		8928BEE9DA5E85030C3AF43D /* MiDeviceCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A10D89E6D8E7B17B6BD37CC /* MiDeviceCatalog.swift */; };
 		95ED9413CBB4F28C56E6AD36 /* SensorSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56F563F44E231C506EBEED86 /* SensorSettingsView.swift */; };
 		B6774F974062067E3034939A /* CustomSampleSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 015EB8B8DFC8FCEB64B1F41A /* CustomSampleSession.swift */; };
 		BCD2E971CDECC9150AFD0B57 /* MiSensorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CCA8D8FD071B4E35711AC66 /* MiSensorApp.swift */; };
 		BDC5053B04A22EE014CC366C /* SensorMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3509239E6C8FE916E8150C3B /* SensorMenuView.swift */; };
 		C1D7F3C289664F489FD4E3D4 /* SensorReading.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79936E0A9F846DE0213F9666 /* SensorReading.swift */; };
 		D1B058A6F7AE88D3D9CD6E78 /* BLEScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57D21D8C4FF48D5A1F7778BD /* BLEScanner.swift */; };
+		D8467F4919D7B29AD3C09B63 /* MiSensorWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50E47193C002825D337623D2 /* MiSensorWidget.swift */; };
+		DBBEAC7B0D74C6ACB3AD81BF /* LocalSnapshotChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1CA552143D03A700F1E259C /* LocalSnapshotChannel.swift */; };
+		E6479A9A50F6F1ECE5BA4E24 /* MiSensorWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = DA66640A7B43041B53DA73CC /* MiSensorWidget.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		E784A4B3ED12E48593EAA3F9 /* MiBeaconParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C5B62E698F0904FDF7554FB /* MiBeaconParser.swift */; };
 		EC191BA849F9EC44EE60FC6C /* CustomServiceParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDA156FFCFAFA0111778B2D0 /* CustomServiceParser.swift */; };
+		F0A93D2B065E9479AF845C11 /* LocalSnapshotChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1CA552143D03A700F1E259C /* LocalSnapshotChannel.swift */; };
+		FB2B850BB989AD90E9AAF55C /* RefreshSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = C09CAC9C5254D942C7CBED92 /* RefreshSignal.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		2CC258FD17A9833EFB19C39A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BC2B0BE048AC24F103BC3C7C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EEC5586B633E6A086830A700;
+			remoteInfo = MiSensorWidget;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		8D26EEBD9689D20569F0E388 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				E6479A9A50F6F1ECE5BA4E24 /* MiSensorWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		015EB8B8DFC8FCEB64B1F41A /* CustomSampleSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomSampleSession.swift; sourceTree = "<group>"; };
 		0CCA8D8FD071B4E35711AC66 /* MiSensorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiSensorApp.swift; sourceTree = "<group>"; };
+		0D74FB6612C7672AFD2FF2B9 /* MiSensorWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MiSensorWidget.entitlements; sourceTree = "<group>"; };
+		10E771B935653878E5A9A489 /* SnapshotServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotServer.swift; sourceTree = "<group>"; };
+		21B1B7B90EA569EE7C6CA304 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		23CF33C7B06E1F118861AB82 /* MiSensorApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MiSensorApp.entitlements; sourceTree = "<group>"; };
 		2A10D89E6D8E7B17B6BD37CC /* MiDeviceCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiDeviceCatalog.swift; sourceTree = "<group>"; };
 		2C5B62E698F0904FDF7554FB /* MiBeaconParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiBeaconParser.swift; sourceTree = "<group>"; };
@@ -34,12 +70,16 @@
 		3C50C725C8B90BAC30DE1012 /* GATTProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GATTProbe.swift; sourceTree = "<group>"; };
 		490A088B1F536C3776F34FDB /* AESCCM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AESCCM.swift; sourceTree = "<group>"; };
 		4B6E380D136DA2BD501BEE14 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		50E47193C002825D337623D2 /* MiSensorWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiSensorWidget.swift; sourceTree = "<group>"; };
 		56F563F44E231C506EBEED86 /* SensorSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorSettingsView.swift; sourceTree = "<group>"; };
 		57D21D8C4FF48D5A1F7778BD /* BLEScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEScanner.swift; sourceTree = "<group>"; };
 		65FF7E98A4D31CCA1A95873E /* SensorController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorController.swift; sourceTree = "<group>"; };
 		79936E0A9F846DE0213F9666 /* SensorReading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorReading.swift; sourceTree = "<group>"; };
 		8C27EFD6E4091ABD3F66820D /* MiSensor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MiSensor.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C09CAC9C5254D942C7CBED92 /* RefreshSignal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RefreshSignal.swift; sourceTree = "<group>"; };
 		CB7117E3CAE68C7BA646B5F1 /* ClockSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClockSync.swift; sourceTree = "<group>"; };
+		DA66640A7B43041B53DA73CC /* MiSensorWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MiSensorWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		E1CA552143D03A700F1E259C /* LocalSnapshotChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSnapshotChannel.swift; sourceTree = "<group>"; };
 		EE5612BF3D0D7597B3C02AF7 /* BindkeyKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BindkeyKeychain.swift; sourceTree = "<group>"; };
 		F2838EB4EDCCB74AC2FAC10D /* TimeSyncSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeSyncSession.swift; sourceTree = "<group>"; };
 		FDA156FFCFAFA0111778B2D0 /* CustomServiceParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomServiceParser.swift; sourceTree = "<group>"; };
@@ -50,8 +90,19 @@
 			isa = PBXGroup;
 			children = (
 				8C27EFD6E4091ABD3F66820D /* MiSensor.app */,
+				DA66640A7B43041B53DA73CC /* MiSensorWidget.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		63D012A514335B81FE29CC53 /* MiSensorWidget */ = {
+			isa = PBXGroup;
+			children = (
+				21B1B7B90EA569EE7C6CA304 /* Info.plist */,
+				0D74FB6612C7672AFD2FF2B9 /* MiSensorWidget.entitlements */,
+				50E47193C002825D337623D2 /* MiSensorWidget.swift */,
+			);
+			path = MiSensorWidget;
 			sourceTree = "<group>";
 		};
 		67A6399781AD5898DE2EA6D5 /* MiSensorApp */ = {
@@ -64,6 +115,7 @@
 				65FF7E98A4D31CCA1A95873E /* SensorController.swift */,
 				3509239E6C8FE916E8150C3B /* SensorMenuView.swift */,
 				56F563F44E231C506EBEED86 /* SensorSettingsView.swift */,
+				10E771B935653878E5A9A489 /* SnapshotServer.swift */,
 			);
 			path = MiSensorApp;
 			sourceTree = "<group>";
@@ -85,8 +137,10 @@
 				015EB8B8DFC8FCEB64B1F41A /* CustomSampleSession.swift */,
 				FDA156FFCFAFA0111778B2D0 /* CustomServiceParser.swift */,
 				3C50C725C8B90BAC30DE1012 /* GATTProbe.swift */,
+				E1CA552143D03A700F1E259C /* LocalSnapshotChannel.swift */,
 				2C5B62E698F0904FDF7554FB /* MiBeaconParser.swift */,
 				2A10D89E6D8E7B17B6BD37CC /* MiDeviceCatalog.swift */,
+				C09CAC9C5254D942C7CBED92 /* RefreshSignal.swift */,
 				79936E0A9F846DE0213F9666 /* SensorReading.swift */,
 				F2838EB4EDCCB74AC2FAC10D /* TimeSyncSession.swift */,
 			);
@@ -98,6 +152,7 @@
 			children = (
 				67A6399781AD5898DE2EA6D5 /* MiSensorApp */,
 				C073D0749AD32D18801B8AE3 /* MiSensorCore */,
+				63D012A514335B81FE29CC53 /* MiSensorWidget */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -110,10 +165,12 @@
 			buildConfigurationList = 775512BD4FD918790D04B9FB /* Build configuration list for PBXNativeTarget "MiSensor" */;
 			buildPhases = (
 				6C17A8F5F71FA7219C4DC719 /* Sources */,
+				8D26EEBD9689D20569F0E388 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				BD33435D9BFEB1BEC30522AA /* PBXTargetDependency */,
 			);
 			name = MiSensor;
 			packageProductDependencies = (
@@ -121,6 +178,23 @@
 			productName = MiSensor;
 			productReference = 8C27EFD6E4091ABD3F66820D /* MiSensor.app */;
 			productType = "com.apple.product-type.application";
+		};
+		EEC5586B633E6A086830A700 /* MiSensorWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4E97B4C98C4FBC782F16E8E8 /* Build configuration list for PBXNativeTarget "MiSensorWidget" */;
+			buildPhases = (
+				030930A2D19F2D9BC56D129D /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MiSensorWidget;
+			packageProductDependencies = (
+			);
+			productName = MiSensorWidget;
+			productReference = DA66640A7B43041B53DA73CC /* MiSensorWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -132,6 +206,9 @@
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					80CB72EAEB81B5529C81F913 = {
+						ProvisioningStyle = Automatic;
+					};
+					EEC5586B633E6A086830A700 = {
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -151,11 +228,24 @@
 			projectRoot = "";
 			targets = (
 				80CB72EAEB81B5529C81F913 /* MiSensor */,
+				EEC5586B633E6A086830A700 /* MiSensorWidget */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXSourcesBuildPhase section */
+		030930A2D19F2D9BC56D129D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F0A93D2B065E9479AF845C11 /* LocalSnapshotChannel.swift in Sources */,
+				8928BEE9DA5E85030C3AF43D /* MiDeviceCatalog.swift in Sources */,
+				D8467F4919D7B29AD3C09B63 /* MiSensorWidget.swift in Sources */,
+				FB2B850BB989AD90E9AAF55C /* RefreshSignal.swift in Sources */,
+				554563D8DA124DE4940FD3E4 /* SensorReading.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		6C17A8F5F71FA7219C4DC719 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -167,20 +257,50 @@
 				B6774F974062067E3034939A /* CustomSampleSession.swift in Sources */,
 				EC191BA849F9EC44EE60FC6C /* CustomServiceParser.swift in Sources */,
 				87D2C0D906E0C37D5207B2AF /* GATTProbe.swift in Sources */,
+				DBBEAC7B0D74C6ACB3AD81BF /* LocalSnapshotChannel.swift in Sources */,
 				E784A4B3ED12E48593EAA3F9 /* MiBeaconParser.swift in Sources */,
 				4E7CDCF9B48E02C1356E9B9A /* MiDeviceCatalog.swift in Sources */,
 				BCD2E971CDECC9150AFD0B57 /* MiSensorApp.swift in Sources */,
+				7EDF8647F12C3D91564DA7A0 /* RefreshSignal.swift in Sources */,
 				52B05099F2265EAFE59D3FE3 /* SensorController.swift in Sources */,
 				BDC5053B04A22EE014CC366C /* SensorMenuView.swift in Sources */,
 				C1D7F3C289664F489FD4E3D4 /* SensorReading.swift in Sources */,
 				95ED9413CBB4F28C56E6AD36 /* SensorSettingsView.swift in Sources */,
+				20EE50D9F87F9903B51ACDA5 /* SnapshotServer.swift in Sources */,
 				14FF8FFE86BEC5076C1CB76E /* TimeSyncSession.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		BD33435D9BFEB1BEC30522AA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = EEC5586B633E6A086830A700 /* MiSensorWidget */;
+			targetProxy = 2CC258FD17A9833EFB19C39A /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		2C755CC77D51CBFE46D4A8F8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				CODE_SIGN_ENTITLEMENTS = Sources/MiSensorWidget/MiSensorWidget.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = Sources/MiSensorWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.MiSensor.MiSensorWidget;
+				PRODUCT_NAME = MiSensorWidget;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
 		30D94C53A16C40484BBDD249 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -241,6 +361,25 @@
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		4946E4686676085E4F26CC1E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				CODE_SIGN_ENTITLEMENTS = Sources/MiSensorWidget/MiSensorWidget.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = Sources/MiSensorWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.MiSensor.MiSensorWidget;
+				PRODUCT_NAME = MiSensorWidget;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
 			};
 			name = Release;
 		};
@@ -353,6 +492,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		4E97B4C98C4FBC782F16E8E8 /* Build configuration list for PBXNativeTarget "MiSensorWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2C755CC77D51CBFE46D4A8F8 /* Debug */,
+				4946E4686676085E4F26CC1E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		775512BD4FD918790D04B9FB /* Build configuration list for PBXNativeTarget "MiSensor" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

@@ -1,7 +1,12 @@
 import AppKit
 import Foundation
 import ServiceManagement
+import WidgetKit
 import os
+
+enum InitTrace {
+    static let logger = Logger(subsystem: "com.example.MiSensor", category: "Init")
+}
 
 @MainActor
 final class SensorController: ObservableObject {
@@ -20,6 +25,8 @@ final class SensorController: ObservableObject {
     @Published private(set) var lastClockSync: [String: Date] = [:]
     /// 被用户忽略的设备 ID（例如共用 FE95 广播的智能灯）。
     @Published private(set) var ignoredDeviceIDs: Set<String> = []
+    /// 小组件深链聚焦的设备：widget 点击哪台，菜单就把哪台临时置顶（约 1 分钟）。
+    @Published private(set) var focusedDeviceID: String?
     /// 时间网关开关。开启后每台设备最多每小时被写一次时间。
     @Published var timeGatewayEnabled: Bool {
         didSet {
@@ -45,6 +52,8 @@ final class SensorController: ObservableObject {
     private var autoProbeDeviceID: String?
     private var probedDeviceIDs: Set<String> = []
     private var pollTasks: [String: Task<Void, Never>] = [:]
+    /// 轮询任务代际：refreshAll 取消旧任务后，旧任务的 defer 不得覆盖新任务句柄。
+    private var pollGenerations: [String: Int] = [:]
     private var pollFailures: [String: Int] = [:]
     private var wakeTask: Task<Void, Never>?
     // 没有时钟特征的固件只尝试一次，避免每次广播都白连一次。
@@ -52,11 +61,16 @@ final class SensorController: ObservableObject {
     // 暴露过 EBE0CCB0 自定义服务的设备，说明确实是温湿度计。
     private var serviceCapableDeviceIDs: Set<String> = []
     private var lastMergeSweep = Date.distantPast
+    private var focusExpireTask: Task<Void, Never>?
     private static let ignoredDevicesKey = "MiSensor.ignoredDevices" 
     private static let gatewayDefaultsKey = "MiSensor.timeGatewayEnabled"
     private static let lastClockSyncKey = "MiSensor.lastClockSync"
     /// 原厂固件没有 RTC 校准，时钟持续漂移；1 小时校一次让记录时间戳保持可信。
     private static let clockSyncInterval: TimeInterval = 3600
+    /// 本机回环快照服务器：给沙盒更严的小组件扩展拉快照 JSON（见 SnapshotServer）。
+    private lazy var snapshotServer: SnapshotServer = SnapshotServer(
+        provider: { [store = self.store] in store.loadAll() }
+    )
 
     init() {
         let savedIgnoredDevices = Set(
@@ -67,6 +81,7 @@ final class SensorController: ObservableObject {
             store = sharedStore
             sharedStorageAvailable = true
             storageDescription = "App Group / sensor-readings.json"
+            Self.migrateLegacySnapshotIntoSharedStore(sharedStore)
         } else {
             let directory = FileManager.default.urls(
                 for: .applicationSupportDirectory,
@@ -83,11 +98,20 @@ final class SensorController: ObservableObject {
             || ProcessInfo.processInfo.arguments.contains("--push-clock")
         lastClockSync = SensorController.loadLastClockSync()
 
-        // 用局部常量，避免在 timeGatewayEnabled 赋值前访问 self。
-        readings = store.loadAll().filter { !savedIgnoredDevices.contains($0.key) }
-        dropDuplicateFallbackRows()
-        for deviceID in readings.keys {
-            scanner.setBindkey(BindkeyKeychain.key(for: deviceID), for: deviceID)
+        // 快照读取改为后台任务：首次启动/更新后的 TCC「App 数据」授权框
+        // 未确认时，`Data(contentsOf:)` 会同步阻塞（open 卡住），绝不能
+        // 挡主线程。广播合并路径是幂等的，先起扫描再回来填数据是安全的。
+        readings = [:]
+        let bootstrapStore = store
+        // Task.detached：loadAll 必须离开主执行器。首次启动/更新后的 TCC
+        // 「App 数据」授权框未确认前，open() 会一直阻塞——detached 只是让
+        // 阻塞发生在后台线程，主线程/服务器/小组件服务保持可用。
+        Task.detached { [weak self] in
+            let loaded = bootstrapStore.loadAll()
+                .filter { !savedIgnoredDevices.contains($0.key) }
+            await MainActor.run {
+                self?.adoptLoadedSnapshot(loaded)
+            }
         }
 
         scanner.onStatusChange = { [weak self] scannerStatus in
@@ -106,6 +130,7 @@ final class SensorController: ObservableObject {
             self?.recordRawFrame(frame)
         }
         scanner.start()
+        InitTrace.logger.fault("init: scanner started")
         for deviceID in readings.keys {
             maybeSyncClock(deviceID: deviceID)
         }
@@ -117,12 +142,136 @@ final class SensorController: ObservableObject {
                 self?.scanner.restart()
             }
         }
+        // 启动即起回环服务器（不依赖文件读取，TCC 卡住时也能先起服务）；
+        // 注：后台 bootstrap 完成后 persist() 会清理被忽略设备并唤醒小组件。
+        InitTrace.logger.fault("init: before server")
+        snapshotServer.start()
+        InitTrace.logger.fault("init: server started")
+        installGetURLHandler()
+        installRefreshSignalObserver()
     }
+
+    /// 后台线程的快照加载完成：合并进 readings、设置 bindkey、
+    /// 再落一次过滤后的快照（清旧被忽略行 + 唤醒小组件时间线）。
+    private func adoptLoadedSnapshot(_ loaded: [String: SensorReading]) {
+        readings.merge(loaded) { existing, loadedValue in
+            // 内存里已有同设备（广播可能先到）：字段级取较新者。
+            existing.updatedAt >= loadedValue.updatedAt ? existing : loadedValue
+        }
+        dropDuplicateFallbackRows()
+        for deviceID in readings.keys {
+            scanner.setBindkey(BindkeyKeychain.key(for: deviceID), for: deviceID)
+            ensurePolling(deviceID: deviceID)
+        }
+        for deviceID in readings.keys {
+            maybeSyncClock(deviceID: deviceID)
+        }
+        status = "已从快照恢复 \(readings.count) 台设备"
+        persist(force: true)
+    }
+
 
     func sortedReadings() -> [SensorReading] {
         readings.values
             .filter { !ignoredDeviceIDs.contains($0.deviceID) }
-            .sorted { $0.displayName.localizedCompare($1.displayName) == .orderedAscending }
+            .sorted { a, b in
+                if let focused = focusedDeviceID {
+                    let fa = a.deviceID == focused
+                    let fb = b.deviceID == focused
+                    if fa != fb { return fa }
+                }
+                // 数据新鲜的排前面，过期/无测量值的沉底；同批内按最近更新排，
+                // 这样菜单栏顶部第一张卡片与小组件（也是取最近更新）一致。
+                let rankA = freshnessRank(a)
+                let rankB = freshnessRank(b)
+                if rankA != rankB { return rankA < rankB }
+                if a.hasMeasurements, b.hasMeasurements, a.updatedAt != b.updatedAt {
+                    return a.updatedAt > b.updatedAt
+                }
+                return a.displayName.localizedCompare(b.displayName) == .orderedAscending
+            }
+    }
+
+    private func freshnessRank(_ reading: SensorReading) -> Int {
+        switch reading.freshness() {
+        case .fresh: return 0
+        case .aging: return 1
+        case .stale: return 2
+        }
+    }
+
+    /// 小组件深链（`misensor://device/<deviceID>`）：点击小组件后把对应设备
+    /// 置顶展示 1 分钟，让菜单栏与小组件口径一致；之后恢复默认排序。
+    func handleWidgetDeepLink(_ url: URL) {
+        guard url.scheme?.lowercased() == "misensor" else { return }
+        let deviceID = url.pathComponents.last ?? ""
+        let decoded = deviceID.removingPercentEncoding ?? deviceID
+        guard !decoded.isEmpty, readings.keys.contains(decoded) else {
+            return
+        }
+        focusedDeviceID = decoded
+        focusExpireTask?.cancel()
+        focusExpireTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 60_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.focusedDeviceID = nil
+        }
+    }
+
+    private func installGetURLHandler() {
+        // LSUIElement + MenuBarExtra 的 SwiftUI 内容是懒加载的，`.onOpenURL`
+        // 挂在弹层视图上收不到系统在弹层未打开时的 GetURL 事件；
+        // 这里直接挂 Apple Event 层的 kInternetEventClass/kAEGetURL。
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleGetURLEvent(_:withReplyEvent:)),
+            forEventClass: OSType(kInternetEventClass),
+            andEventID: OSType(kAEGetURL)
+        )
+    }
+
+    @objc private func handleGetURLEvent(
+        _ event: NSAppleEventDescriptor,
+        withReplyEvent reply: NSAppleEventDescriptor
+    ) {
+        guard let urlString = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
+              let url = URL(string: urlString) else { return }
+        handleWidgetDeepLink(url)
+    }
+
+    /// 设置页只读展示（快照端口 = 编译期常量）。
+    var snapshotServerPort: UInt16 { LocalSnapshotChannel.port }
+
+    /// 「点击刷新」：立即对所有受跟踪设备发起一轮 GATT 采样。
+    ///
+    /// 绕过一次 120s 的轮询间隔与 3 次失败熔断（打一次失败计数清零重试；
+    /// 之后依旧连续三次失败才重新挂“不支持免密钥读取”）。
+    /// 老任务先取消再排队，`pollGenerations` 保证旧任务的 defer 不会抹掉新任务。
+    func refreshAll() {
+        let deviceIDs = sortedReadings().map(\.deviceID)
+        guard !deviceIDs.isEmpty else {
+            status = "暂无可刷新的设备，等待广播"
+            return
+        }
+        status = "正在刷新…"
+        for deviceID in deviceIDs {
+            pollTasks.removeValue(forKey: deviceID)?.cancel()
+            pollFailures[deviceID] = 0
+            problems[deviceID] = nil
+            ensurePolling(deviceID: deviceID)
+            maybeSyncClock(deviceID: deviceID)
+        }
+    }
+
+    private func installRefreshSignalObserver() {
+        // 小组件的「点击刷新」通过分布式通知跨沙盒到达这里：
+        // 扩展进程不能直接碰 App 的状态，也无需把主 App 拉到前台。
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name(RefreshSignal.notificationName),
+            object: nil, queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refreshAll() }
+        }
     }
 
     /// 忽略一台设备：常见的例子是共用 `FE95` 广播、但永远读不到温湿度的智能灯。
@@ -413,8 +562,14 @@ final class SensorController: ObservableObject {
         let deviceID = canonicalID(rawDeviceID)
         guard pollTasks[deviceID] == nil else { return }
         pollLogger.notice("poll start \(deviceID, privacy: .public)")
+        let generation = (pollGenerations[deviceID] ?? 0) + 1
+        pollGenerations[deviceID] = generation
         pollTasks[deviceID] = Task { [weak self] in
-            defer { self?.pollTasks[deviceID] = nil }
+            defer {
+                if let self, self.pollGenerations[deviceID] == generation {
+                    self.pollTasks[deviceID] = nil
+                }
+            }
             while !Task.isCancelled {
                 guard let self else { return }
                 do {
@@ -438,6 +593,7 @@ final class SensorController: ObservableObject {
     }
 
     private func apply(_ sample: CustomSensorSample, to deviceID: String) {
+        guard !ignoredDeviceIDs.contains(deviceID) else { return }
         serviceCapableDeviceIDs.insert(deviceID)
         var reading = readings[deviceID] ?? SensorReading(
             deviceID: deviceID,
@@ -565,6 +721,18 @@ final class SensorController: ObservableObject {
 
     private func handleProblem(deviceID rawDeviceID: String, error: MiBeaconError) {
         let deviceID = canonicalID(rawDeviceID)
+        // 已忽略的设备：身份帧也不建占位行、不起轮询（之前 identity-only
+        // 广播会从这条路径把已被忽略的设备重新拉回图标与快照）。
+        guard !ignoredDeviceIDs.contains(deviceID) else { return }
+        // 加密帧的 bindkey 提示只对「当前完全没有测量可读」的设备有意义：
+        // 已在用 GATT/明文广播喂数据的设备，每次加密广播都会把这条警告
+        // 重新顶回 problems/status，噪音远大于信息量，直接忽略。
+        if error == .bindkeyRequired
+            || error == .authenticationFailed
+            || error == .missingMACForDecryption,
+           readings[deviceID]?.hasMeasurements == true {
+            return
+        }
         // An encrypted sensor has no measurement yet, but it must still appear in
         // Settings so its first bindkey can be entered. This placeholder is not
         // written to the snapshot store.
@@ -588,6 +756,9 @@ final class SensorController: ObservableObject {
     private func receive(_ advertisement: SensorAdvertisement) {
         let beacon = advertisement.beacon
         let deviceID = canonicalID(beacon.deviceID)
+        // 已忽略的设备：不建行、不合并、不落盘（原始帧 BLEScanner 侧仍有记录），
+        // 否则十几秒后广播会让它重新占据图标、小组件与快照。
+        guard !ignoredDeviceIDs.contains(deviceID) else { return }
         let previous = readings[deviceID]
         var reading = previous ?? SensorReading(
             deviceID: deviceID,
@@ -672,11 +843,43 @@ final class SensorController: ObservableObject {
         return "米家温湿度计"
     }
 
+    /// 旧构建在 App Group 不可用时把快照写进了 App 自己的容器；首次拿到
+    /// App Group 共享存储时把它搬过去，避免菜单栏和小组件短暂变成空列表。
+    /// 只在本机文件层面复制（同一 JSON 格式），不涉及任何蓝牙交互。
+    private static func migrateLegacySnapshotIntoSharedStore(
+        _ store: SensorSnapshotStore,
+        fileManager: FileManager = .default
+    ) {
+        // 与 SensorController 无 App Group 回退路径保持一致：
+        // <App 容器>/Library/Application Support/MiSensor/sensor-readings.json
+        let legacyDirectory = fileManager.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        )[0].appendingPathComponent("MiSensor", isDirectory: true)
+        let legacyURL = legacyDirectory
+            .appendingPathComponent("sensor-readings.json")
+        guard fileManager.fileExists(atPath: legacyURL.path) else { return }
+        guard !fileManager.fileExists(atPath: store.storeFileURL.path) else { return }
+        do {
+            try fileManager.copyItem(at: legacyURL, to: store.storeFileURL)
+        } catch {
+            // 迁移失败不阻塞启动；设备会很快广播出新数据覆盖。
+        }
+    }
+
     private func persist(force: Bool = true) {
         if !force, Date().timeIntervalSince(lastStoreWrite) < 30 { return }
         do {
-            try store.saveAll(readings.filter { $0.value.hasMeasurements })
+            // 忽略的设备不写进共享快照，否则小组件/图标会把它当最新设备展示。
+            try store.saveAll(readings.filter {
+                $0.value.hasMeasurements && !ignoredDeviceIDs.contains($0.key)
+            })
             lastStoreWrite = Date()
+            // 快照写进了 App Group 容器，让小组件立刻重取一次，
+            // 不必等系统 15 分钟的固定刷新窗口。
+            if #available(macOS 14.0, *) {
+                WidgetCenter.shared.reloadAllTimelines()
+            }
         } catch {
             status = "保存共享数据失败：\(error.localizedDescription)"
         }

@@ -94,12 +94,24 @@ public enum SensorSnapshotCleanup {
     }
 }
 
-public struct SensorSnapshotStore {
+public struct SensorSnapshotStore: @unchecked Sendable {
     public static let defaultFilename = "sensor-readings.json"
+    /// App Group UserDefaults 镜像键。实测（2026-11-08）小组件扩展进程读
+    /// group 容器里的 JSON 文件会被 System Policy 拒绝（Sandbox
+    /// `file-read-data` → EPERM），但 cfprefsd 的 group suite 通道可用，
+    /// 所以主 App 落盘文件的同时把同一份 JSON 镜像进 suite；扩展端
+    /// 读不到文件时回退到 suite。
+    static let suiteMirrorKey = "MiSensor.snapshotJSON"
 
-    /// Xcode expands the same DEVELOPMENT_TEAM-based value in both targets'
-    /// entitlements and Info.plists. Keeping runtime lookup here prevents a
-    /// manually edited Swift constant from drifting away from signing settings.
+    /// 主 App 与小组件（WidgetKit 扩展）共用的 App Group 标识。
+    ///
+    /// 本机没有 Mac Development 签名证书，`$(DEVELOPMENT_TEAM)` 展开为空会让
+    /// group 变成非法的 `.com.example.misensor`（AGENTS.md §9 曾实测
+    /// containermanagerd 拒绝）。2026-11-07 已实测改为不带 Team 前缀的
+    /// `com.example.misensor` 后，ad-hoc + App Sandbox 下主 App 与小组件进程
+    /// 都能读写 `~/Library/Group Containers/com.example.misensor`。
+    /// 若将来接入真实签名证书，需连同两个 entitlements 与两个 Info.plist 一起换回
+    /// `$(DEVELOPMENT_TEAM).com.example.misensor`。
     public static var configuredAppGroup: String? {
         guard let value = Bundle.main.object(
             forInfoDictionaryKey: "MiSensorAppGroupIdentifier"
@@ -114,10 +126,16 @@ public struct SensorSnapshotStore {
 
     private let fileURL: URL
     private let fileManager: FileManager
+    private let suite: UserDefaults?
 
-    public init(fileURL: URL, fileManager: FileManager = .default) {
+    public init(
+        fileURL: URL,
+        fileManager: FileManager = .default,
+        suite: UserDefaults? = nil
+    ) {
         self.fileURL = fileURL
         self.fileManager = fileManager
+        self.suite = suite
     }
 
     public init?(
@@ -132,15 +150,32 @@ public struct SensorSnapshotStore {
               ) else { return nil }
         self.init(
             fileURL: container.appendingPathComponent(filename),
-            fileManager: fileManager
+            fileManager: fileManager,
+            suite: UserDefaults(suiteName: group)
         )
     }
 
+    /// 快照 JSON 的实际落盘位置；主 App 首次迁移旧快照时使用。
+    public var storeFileURL: URL { fileURL }
+
     public func loadAll() -> [String: SensorReading] {
-        guard let data = try? Data(contentsOf: fileURL) else { return [:] }
+        if let data = try? Data(contentsOf: fileURL),
+           let readings = SensorSnapshotStore.decode(data) {
+            return readings
+        }
+        // 扩展进程沙盒拒绝读 group 容器文件时走 suite 镜像。
+        if let suite, let data = suite.data(forKey: SensorSnapshotStore.suiteMirrorKey),
+           let readings = SensorSnapshotStore.decode(data) {
+            return readings
+        }
+        return [:]
+    }
+
+    /// 与「本机 HTTP 快照通道」共用的解码入口（SnapshotServer / Widget）。
+    public static func decode(_ data: Data) -> [String: SensorReading]? {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode([String: SensorReading].self, from: data)) ?? [:]
+        return try? decoder.decode([String: SensorReading].self, from: data)
     }
 
     public func saveAll(_ readings: [String: SensorReading]) throws {
@@ -155,5 +190,7 @@ public struct SensorSnapshotStore {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(readings)
         try data.write(to: fileURL, options: .atomic)
+        // 同一份 JSON 镜像进 group suite，供沙盒更严的小组件扩展读取。
+        suite?.set(data, forKey: SensorSnapshotStore.suiteMirrorKey)
     }
 }

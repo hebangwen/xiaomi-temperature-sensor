@@ -36,14 +36,19 @@ Sources/MiSensorCore/          纯逻辑，由主 App 复用
   ClockSync.swift              设备时钟编解码 + 校时结果模型（唯一写设备的协议）
   TimeSyncSession.swift        校时会话：读基线 → 写入 → 回读校验
   GATTProbe.swift              完整 GATT 树探测（诊断用）
-  SensorReading.swift          共享模型 + 数据年龄 + 原子快照存储
+  SensorReading.swift          共享模型 + 数据年龄 + 原子快照存储（含 suite 镜像与本机 HTTP 解码入口）
+  LocalSnapshotChannel.swift   本机回环快照通道双端常量（端口 46193）
 
 Sources/MiSensorApp/           菜单栏 App（LSUIElement，无 Dock 图标）
   MiSensorApp.swift            MenuBarExtra + Settings 场景
   SensorController.swift       状态合并、GATT 轮询、登录启动
   SensorMenuView.swift         菜单栏界面
   SensorSettingsView.swift     设备 / 密钥 / 探测 / 权限
+  SnapshotServer.swift         127.0.0.1 快照回环服务器（给小组件扩展供数据）
   BindkeyKeychain.swift        Keychain 读写
+
+Sources/MiSensorWidget/         桌面小组件（WidgetKit，内嵌 appex，见 §11）
+  MiSensorWidget.swift          时间线 Provider + 三种尺寸的界面
 
 Sources/MiSensorCLI/           命令行网关（头less 扫描 / 读时钟 / 推时间）
   main.swift                   MiSensorCLI scan|clock|sync|probe|sample
@@ -266,6 +271,11 @@ deviceID = 帧内 MAC（大写、冒号分隔、反序显示）
   `A4:C1:38:DB:98:A6` 就是同一台设备的两行。
 - 用户可在设置页「忽略此设备」，列表存 `UserDefaults` 的 `MiSensor.ignoredDevices`；
   忽略只影响本机显示与轮询，设备本身不做任何操作，可一键恢复。
+- **忽略必须挡在「合并 + 落盘」两层**（2026-11-08 修复）：仅靠启动时 `readings` 过滤 +
+  `shouldTrack` 的闸门挡不住广播——`receive()` 会为任何到达的广播建行/合并，十几秒后
+  被忽略设备就会重新占据菜单图标与共享快照（小组件又显示出来）。现在
+  `receive()` 开头直接跳过已忽略设备；`persist()` 写快照时同样过滤；
+  启动时先 `persist(force: true)` 把旧快照里已忽略的行清掉再唤醒小组件时间线。
 
 ### 4.6 时间同步（充当蓝牙网关）
 
@@ -435,11 +445,21 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 
 ## 9. 签名与 App Group
 
-- macOS App Group 必须以签名 Team ID 前缀，格式 `$(DEVELOPMENT_TEAM).com.example.misensor`，否则 `containermanagerd` 拒绝访问。
-- entitlements 与 `Info.plist` 的 `MiSensorAppGroupIdentifier` 必须**同步**；运行时代码直接读 Info.plist，不需要改 Swift 常量。
-- 主 App 需要 `com.apple.security.device.bluetooth`。
+- entitlements 与 `Info.plist` 的 `MiSensorAppGroupIdentifier` 必须**同步**（主 App 与 Widget 两个 target 共四处）；运行时代码直接读 Info.plist，不需要改 Swift 常量。
+- 主 App 需要 `com.apple.security.device.bluetooth`；快照回环服务器需要 `com.apple.security.network.server`。
 - 用 ad-hoc 重签名调试时若漏掉 `--entitlements`，蓝牙会静默失效（`tccRequired` 后没有 `TCCDone`）。
-- 本机没有 `Mac Development` 签名证书（`xcodegen` 生成的工程无 `DEVELOPMENT_TEAM`，ad-hoc 构建）：`$(DEVELOPMENT_TEAM)` 展开成空前缀，`configuredAppGroup` 因前导 `.` 判定无效，快照**回退**到 `~/Library/Containers/com.example.MiSensor/Data/Library/Application Support/MiSensor/sensor-readings.json`。这是当前机器的预期路径；仅当出现真实签名证书且 `DEVELOPMENT_TEAM` 配进 `project.yml` 后才会回到 App Group 共享路径。给缺失 Team 的 project.yml 强行填 Team ID 会让 xcodebuild 直接报 "No signing certificate Mac Development found"。
+- **App Group 访问的分进程规则（2026-11-07/08 双日实测修正）**：
+  - **普通沙盒 App**（application）：ad-hoc 签名 + 不带前缀的 `com.example.misensor` 可以正常创建并读写 `~/Library/Group Containers/com.example.misensor`（探针 App 与主 App 均实测）。主 App 侧因此走这条共享路径落盘快照。
+  - **App 扩展（WidgetKit appex）**：即便 entitlements 里有同一个 group，containermanagerd 也直接 REJECTED，日志原文：`Group containers identifiers should be prefixed by requestor's team ID to allow access on this platform`——ad-hoc 没有 Team ID，扩展对 group 容器**读写文件**都被拒（内核 Sandbox `System Policy: MiSensorWidget deny file-read/file-write-data`）。
+  - **cfprefsd 的 group suite（`UserDefaults(suiteName:)`）在 ad-hoc 沙盒下是各容器私有视图**：app / widget / 探针三个进程对同一 suite 写读互不可见（Group Containers `Library/Preferences/<group>.plist` 有内容但其它进程读不到）。`SensorSnapshotStore` 保留了 suite 镜像代码路径，但**不能作为跨进程数据链路依赖**。
+  - **扩展沙盒也不允许出站网络**，需要显式加 `com.apple.security.network.client`；加了之后 `URLSession` 访问 127.0.0.1 才通。
+- ad-hoc 环境下小组件的数据通道因此是**本机回环 HTTP**：主 App `SnapshotServer` 绑 `127.0.0.1:46193`（`MiSensorCore/LocalSnapshotChannel.swift` 双端常量）暴露 `GET /snapshot` → `[String: SensorReading]` ISO8601 JSON；小组件 `URLSession` 拉取（App 重启窗口期可能 connection-refused，Provider 内置一次 1.5s 重试），失败回退 `SensorSnapshotStore()`（将来有真实 Team 签名时文件通道自动恢复，App Group group id 换回 `$(DEVELOPMENT_TEAM).com.example.misensor`）。
+- **快照端口是编译期常量（2026-11-08 定稿）**：`LocalSnapshotChannel.port`（默认 46193），默认不可更改、可读取；改动只能编辑该文件字面量后重新编译。设置页「通用 → 快照端口」为**只读展示**（没有 UserDefaults/热重绑路径）。曾短暂做过运行时可配，因小组件扩展读不到主 App UserDefaults（各容器私有）而撤回——任何运行时改法都会造成主 App 与小组件端口口径不一致。
+- **`NWListener` 在本机 SDK（macOS 27.2 beta，build 25G332）绑定端口必报 `POSIXErrorCode 22 Invalid argument`**：`NWListener(using:on:)`、`requiredLocalEndpoint` 形参、加不加 `allowLocalEndpointReuse` 都一样，沙盒内外一致。所以 `SnapshotServer` 用 **BSD socket**（`socket/bind(127.0.0.1)/listen/accept` + 后台 accept 循环）实现，实测沙盒内可用。`bind/listen` 失败会打 `com.example.MiSensor` category `SnapshotServer` 的 error 日志；启动轨迹在 category `Init`。注意 os.Logger 的 success/info 日志需要 `log show --info` 才能看到，默认级别只显示 fault/error。
+- **深链与排序口径**（2026-11-08）：小组件点击通过 `misensor://device/<id>`（大尺寸 `misensor://app`）唤起主 App：scheme 在主 App Info.plist 的 `CFBundleURLTypes` 注册；App 内通过 `NSAppleEventManager` 的 `kAEGetURL` 处理（MenuBarExtra 弹层是懒加载的，`.onOpenURL` 挂在弹层视图上收不到未打开时的 GetURL 事件）。收到深链后 `SensorController.focusedDeviceID` 把对应设备置顶 1 分钟。菜单列表排序规则：聚焦设备 > 数据新鲜（fresh/aging/stale 分层）> 最近更新 > 名称；与小组件「按 updatedAt 取最大」口径一致，避免菜单第一张卡与小组件数字对不上。
+- 本机没有 `Mac Development` 签名证书（`xcodegen` 生成的工程无 `DEVELOPMENT_TEAM`，ad-hoc 构建）。给缺失 Team 的 project.yml 强行填 Team ID 会让 xcodebuild 直接报 "No signing certificate Mac Development found"。
+- 小组件与主 App 同步：主 App `persist()` 每次写盘后调 `WidgetCenter.shared.reloadAllTimelines()`，启动时也无条件刷一次；小组件自身另有 ≤15 分钟的系统兜底刷新。
+- **TCC「App 数据」阻塞坑（2026-11-08 实测）**：macOS 26.7 对「沙盒 App 读 group 容器文件」叠加了 TCC 服务 `kTCCServiceSystemPolicyAppData`（每次重签/重装＝新 cdhash，都会出新弹窗：日志 `AUTHREQ_PROMPTING ... DB Action:None`）。授权框未点「允许」前，扩展/主 App 的 `open()` 会**无限阻塞**（不是 EPERM）——曾有主线程卡死在 `Data(contentsOf:)` 的现役案例（`sample` 可直接看出主线程在 `__open`）。因此 `SensorController.init` 的快照加载必须 `Task.detached`（后台线程读 + `MainActor.run` 合并），弹窗期间的阻塞只影响后台线程；服务器/小组件/菜单栏照常工作，授权确认后数据自动恢复。ad-hoc 签名下该授权无法永久化（TCC 按 cdhash 记录），**走「一次构建 = 一次点允许」**；只有 Developer ID 签名 + 公证才能让 TCC 认住 bundle id。
 
 ---
 
@@ -457,3 +477,20 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 10. 设备时钟字段就是 **Unix 秒**，写入不要扣时区（18:57 那版扣了 8 小时，设备直接慢 8 小时）。判断时钟是否正确只看**设备屏幕**；米家 App 可能写入 `Unix + 8h`，不要拿它的显示当判据。
 11. 别把共用 `FE95` 的设备（灯、开关……）当温湿度计：建行前先过 `shouldTrack`；也不要为了“看起来干净”丢掉原始帧——诊断依赖它。
 12. 见到 UUID 身份的行，先想“这是不是某台 MAC 行的重复行”，用 `SensorSnapshotCleanup` / `sweepProvisionalRows()` 合并，而不是新加一台设备。
+13. 小组件侧改动要同步检查四处 group 配置（两个 entitlements + 两个 Info.plist）与 `project.yml` 的 widget target，改完重新 `xcodegen generate`。
+
+---
+
+## 11. 桌面小组件（WidgetKit）
+
+- Target `MiSensorWidget`（`app-extension`，bundle id `com.example.MiSensor.MiSensorWidget`），以 `PlugIns/MiSensorWidget.appex` 内嵌进主 App，`NSExtensionPointIdentifier = com.apple.widgetkit-extension`。entitlements：`app-sandbox` 必须**开启**（pkd 会拒绝未沙盒化的扩展注册："plug-ins must be sandboxed"），另加 `com.apple.security.network.client`（回环 HTTP）。
+- **「点击刷新」**（2026-11-08 新增）：弹层头部与小组件右上角都有刷新入口。菜单侧调 `SensorController.refreshAll()`（取消并重排所有 poll task，清零失败计数，绕过一次 120s 间隔与 3 次失败熔断；`ensurePolling` 用 `pollGenerations` 代际号防止被取消旧任务的 defer 抹掉新任务句柄）。小组件侧是 `RefreshSnapshotIntent`（AppIntents，widget-only，不开 App 不抢前台）：扩展进程发名为 `com.example.MiSensor.refreshRequest` 的分布式通知，主 App `installRefreshSignalObserver()` 收到后同样执行 `refreshAll()`；实测路径用带反射的探针 App post 通知即可（沙盒内可达主 App，`Poll` category 会立刻出现 `poll start/ok`）。注意 SWIFT6 下分布式通知回调经 `Task { @MainActor in ... }` 回到主执行器。
+- 源码只有 `Sources/MiSensorWidget/MiSensorWidget.swift` + Info.plist/entitlements；共享逻辑直接引用 `MiSensorCore/SensorReading.swift`、`MiDeviceCatalog.swift`、`LocalSnapshotChannel.swift`（不引入 CoreBluetooth，避免扩展里初始化蓝牙栈）。
+- 数据通道：**先 `http://127.0.0.1:46193/snapshot`（`LocalSnapshotChannel.port`，主 App `SnapshotServer` 提供），HTTP 失败再试 `SensorSnapshotStore()` 文件/suite**；取 `hasMeasurements` 的设备按 `updatedAt` 倒序。TimelineProvider 的实现是 async（HTTP 拉取），completion 用 unchecked Sendable 盒子桥接到 Task。
+- 支持 `systemSmall`（单设备大字温度）/ `systemMedium`（单设备 + 湿度/电量/信号信息栏）/ `systemLarge`（最多 4 台设备列表）；无数据时显示「等待温湿度数据」占位。
+- **安装路径要求**：小组件扩展的发现注册（ExtensionKit/chronod）对「DerivedData 里的临时路径 + 反复 kill/重建」不健壮——缓存 bookmark 失效后 chronod 报 `Unable to find ... extension directly`，且失败重试是**小时级预算**（不会马上自愈）。正规姿势：把构建产物装进 `/Applications` 并 `lsregister -f /Applications/MiSensor.app`，必要时 `killall chronod` 让其重扫（实测立即恢复 `reload: succeeded`）。结论：**分析阶段可以在 DerivedData 里跑，但定稿/日常使用一律从 `/Applications/MiSensor.app` 运行**。
+- 验证手段（无头也能做）：
+  - 日志：小组件数据侧 `log show --predicate 'subsystem == "com.example.MiSensor" AND category == "WidgetData"'` 看 `widget load: channel=http readings=N`（N>0 即拿到数据，readings=2 是本机两台实测设备）；时间线侧 `process == "chronod"` 看 `reload: succeeded with N entries`。
+  - 直接验证 HTTP 通道：`curl http://127.0.0.1:46193/snapshot`。
+  - 沙盒拒绝排查：`log show --predicate 'eventMessage CONTAINS "deny"'` 里看 `System Policy: MiSensorWidget deny ...`；扩展侧的 group 访问被拒时 containermanagerd 会打 REJECTED（见 §9）。
+  - shell 直接 `ls` Group Containers 会 EPERM（目录 ACL 只放行持有 group entitlement 的进程），必须用探针 App 读。

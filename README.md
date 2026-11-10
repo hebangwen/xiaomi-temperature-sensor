@@ -216,7 +216,9 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 - App Group 快照编码/解码；
 - 设备时钟编码与回读判定（真实抓包向量：写入 `B2 D0 EE 6A`、回读 `B5 D0 EE 6A`、未校时基线 `2E 89 2D 06`）。
 
-> Widget 已暂时移除；需要恢复时取 git 历史中的 `Sources/MiSensorWidget`（commit `324d0c5`）。
+> 小组件为 WidgetKit 目标 `MiSensorWidget`（systemSmall / systemMedium / systemLarge），
+> 通过 App Group `com.example.misensor` 读取主 App 的 `sensor-readings.json`；主 App
+> 每次落盘快照都会立刻刷新小组件时间线。设计细节见 `AGENTS.md` §9 / §11。
 
 ## 文件结构
 

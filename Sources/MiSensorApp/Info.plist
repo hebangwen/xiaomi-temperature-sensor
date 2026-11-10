@@ -4,6 +4,17 @@
 <dict>
     <key>CFBundleDevelopmentRegion</key>
     <string>zh_CN</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.example.MiSensor.deeplink</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>misensor</string>
+            </array>
+        </dict>
+    </array>
     <key>CFBundleDisplayName</key>
     <string>米家温湿度</string>
     <key>CFBundleExecutable</key>
@@ -25,7 +36,7 @@
     <key>LSUIElement</key>
     <true/>
     <key>MiSensorAppGroupIdentifier</key>
-    <string>$(DEVELOPMENT_TEAM).com.example.misensor</string>
+    <string>com.example.misensor</string>
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>读取附近小米温湿度计的蓝牙广播，用于显示温度和湿度。</string>
     <key>NSPrincipalClass</key>

@@ -311,6 +311,12 @@ struct SensorSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Section("快照端口") {
+                LabeledContent("端口号", value: String(controller.snapshotServerPort))
+                Text("编译期常量（Sources/MiSensorCore/LocalSnapshotChannel.swift），默认 46193。组件与终端集成通过 http://127.0.0.1:<端口>/snapshot 拉快照；小组件与该值共用同一个常量。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if let message { footer(message) }
         }
         .formStyle(.grouped)
